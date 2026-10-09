@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Автономные Шахматы с ИИ</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #222; color: #fff; margin: 0; padding: 20px; }
+        h2 { color: #f0d9b5; margin-bottom: 5px; }
+        .status { font-size: 16px; margin-bottom: 20px; color: #aaa; min-height: 24px; }
+        .board { display: grid; grid-template-columns: repeat(8, 12.5%); grid-template-rows: repeat(8, 12.5%); width: 100%; max-width: 440px; aspect-ratio: 1 / 1; margin: 0 auto; border: 6px solid #444; border-radius: 4px; box-shadow: 0 12px 36px rgba(0,0,0,0.5); }
+        .cell { display: flex; align-items: center; justify-content: center; font-size: calc(24px + 2vw); cursor: pointer; user-select: none; }
+        @media (min-width: 440px) { .cell { font-size: 44px; } }
+        .light { background-color: #f0d9b5; }
+        .dark { background-color: #b58863; }
+        .selected { background-color: #7ab874 !important; }
+        .black-piece { color: #000; filter: drop-shadow(0px 0px 1px #fff); }
+        .white-piece { color: #fff; filter: drop-shadow(0px 0px 2px #000); }
+    </style>
+</head>
+<body>
+
+    <h2>Шахматы с ИИ (100% Автономные)</h2>
+    <div class="status" id="game-status">Ваш ход (Белые). Нажмите на фигуру.</div>
+    <div id="board" class="board"></div>
+
+<script>
+// Встроенный легковесный движок шахматных правил
+class LocalChessEngine {
+    constructor() {
+        this.board = this.initBoard();
+        this.turn = 'w';
+    }
+
+    initBoard() {
+        const b = Array(8).fill(null).map(() => Array(8).fill(null));
+        const backRow = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
+        for (let c = 0; c < 8; c++) {
+            b[0][c] = { type: backRow[c], color: 'b' };
+            b[1][c] = { type: 'p', color: 'b' };
+            b[6][c] = { type: 'p', color: 'w' };
+            b[7][c] = { type: backRow[c], color: 'w' };
+        }
+        return b;
+    }
+
+    getPiece(r, c) { return this.board[r][c]; }
+
+    getMovesForPiece(r, c) {
+        const p = this.board[r][c];
+        if (!p || p.color !== this.turn) return [];
+        const moves = [];
+        const dir = p.color === 'w' ? -1 : 1;
+
+        if (p.type === 'p') { // Пешка
+            if (r + dir >= 0 && r + dir < 8 && !this.board[r + dir][c]) {
+                moves.push({ r: r + dir, c: c });
+                const startRow = p.color === 'w' ? 6 : 1;
+                if (r === startRow && !this.board[r + dir * 2][c]) {
+                    moves.push({ r: r + dir * 2, c: c });
+                }
+            }
+            const attacks = [[dir, -1], [dir, 1]];
+            for (let [dr, dc] of attacks) {
+                if (r + dr >= 0 && r + dr < 8 && c + dc >= 0 && c + dc < 8) {
+                    const target = this.board[r + dr][c + dc];
+                    if (target && target.color !== p.color) moves.push({ r: r + dr, c: c + dc });
+                }
+            }
+        } else if (p.type === 'n') { // Конь
+            const knightMoves = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+            for (let [dr, dc] of knightMoves) {
+                let nr = r + dr, nc = c + dc;
+                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if (!this.board[nr][nc] || this.board[nr][nc].color !== p.color) moves.push({ r: nr, c: nc });
+                }
+            }
+        } else if (p.type === 'b' || p.type === 'r' || p.type === 'q') { // Слон, Ладья, Ферзь
+            const dirs = [];
+            if (p.type === 'r' || p.type === 'q') dirs.push([-1,0],[1,0],[0,-1],[0,1]);
+            if (p.type === 'b' || p.type === 'q') dirs.push([-1,-1],[-1,1],[1,-1],[1,1]);
+            for (let [dr, dc] of dirs) {
+                let nr = r + dr, nc = c + dc;
+                while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if (!this.board[nr][nc]) {
+                        moves.push({ r: nr, c: nc });
+                    } else {
+                        if (this.board[nr][nc].color !== p.color) moves.push({ r: nr, c: nc });
+                        break;
+                    }
+                    nr += dr; nc += dc;
+                }
+            }
+        } else if (p.type === 'k') { // Король
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    if (dr === 0 && dc === 0) continue;
+                    let nr = r + dr, nc = c + dc;
+                    if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                        if (!this.board[nr][nc] || this.board[nr][nc].color !== p.color) moves.push({ r: nr, c: nc });
+                    }
+                }
+            }
+        }
+        return moves;
+    }
+
+    getAllMoves() {
+        const moves = [];
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                if (this.board[r][c] && this.board[r][c].color === this.turn) {
+                    this.getMovesForPiece(r, c).forEach(m => moves.push({ from: { r, c }, to: m }));
+                }
+            }
+        }
+        return moves;
+    }
+
+    makeMove(from, to) {
+        const p = this.board[from.r][from.c];
+        this.board[to.r][to.c] = p;
+        this.board[from.r][from.c] = null;
+        if (p.type === 'p' && (to.r === 0 || to.r === 7)) p.type = 'q'; // Превращение в ферзя
+        this.turn = this.turn === 'w' ? 'b' : 'w';
+    }
+}
+
+const game = new LocalChessEngine();
+let selected = null;
+
+const pieceSymbols = { 'wp':'♙','wn':'♘','wb':'♗','wr':'♖','wq':'♕','wk':'♔','bp':'♟','bn':'♞','bb':'♝','br':'♜','bq':'♛','bk':'♚' };
+const pieceValues = { p: 10, n: 30, b: 30, r: 50, q: 90, k: 9000 };
+
+function evaluateBoard(board) {
+    let score = 0;
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+            let p = board[r][c];
+            if (p) {
+                let val = pieceValues[p.type];
+                score += (p.color === 'w' ? val : -val);
+            }
+        }
+    }
+    return score;
+}
+
+function makeAIMove() {
+    let moves = game.getAllMoves();
+    if (moves.length === 0) {
+        document.getElementById('game-status').innerText = "Игра окончена!";
+        return;
+    }
+
+    let bestMove = moves[Math.floor(Math.random() * moves.length)];
+    let bestValue = Infinity; // Черный ИИ минимизирует оценку белых
+
+    // Быстрая оценка лучшего хода на 1 шаг вперед
+    for (let m of moves) {
+        let originalSource = game.board[m.from.r][m.from.c];
+        let originalTarget = game.board[m.to.r][m.to.c];
+        
+        game.board[m.to.r][m.to.c] = originalSource;
+        game.board[m.from.r][m.from.c] = null;
+        
+        let score = evaluateBoard(game.board);
+        
+        game.board[m.from.r][m.from.c] = originalSource;
+        game.board[m.to.r][m.to.c] = originalTarget;
+
+        if (score < bestValue) {
+            bestValue = score;
+            bestMove = m;
+        }
+    }
+
+    game.makeMove(bestMove.from, bestMove.to);
+    render();
+    document.getElementById('game-status').innerText = "Ваш ход (Белые).";
+}
+
+function render() {
+    const boardDiv = document.getElementById('board');
+    boardDiv.innerHTML = '';
+
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+            let cell = document.createElement('div');
+            cell.className = 'cell ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
+            if (selected && selected.r === r && selected.c === c) cell.className += ' selected';
+
+            let p = game.getPiece(r, c);
+            if (p) {
+                cell.innerText = pieceSymbols[p.color + p.type];
+                cell.className += (p.color === 'w' ? ' white-piece' : ' black-piece');
+            }
+
+            cell.onclick = () => handleClick(r, c);
+            boardDiv.appendChild(cell);
+        }
+    }
+}
+
+function handleClick(r, c) {
+    if (game.turn === 'b') return;
+    let p = game.getPiece(r, c);
+
+    if (selected === null) {
+        if (p && p.color === 'w') {
+            selected = { r, c };
+            render();
+        }
+    } else {
+        let validMoves = game.getMovesForPiece(selected.r, selected.c);
+        let isMoveValid = validMoves.some(m => m.r === r && m.c === c);
+
+        if (isMoveValid) {
+            game.makeMove(selected, { r, c });
+            selected = null;
+            render();
+            document.getElementById('game-status').innerText = "Компьютер думает...";
+            setTimeout(makeAIMove, 300);
+        } else {
+            selected = (p && p.color === 'w') ? { r, c } : null;
+            render();
+        }
+    }
+}
+
+render();
+</script>
+</body>
+</html>
